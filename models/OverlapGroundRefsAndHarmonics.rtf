@@ -1,0 +1,315 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2638
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww34360\viewh19800\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 \
+//LOADS FEATURECOLLECTIONS WITH TRAIN/VAL/TEST, OVERLAPS EACHPOINT WITH HARMONIC FEATURES AND THEN SAVES TO DRIVE\
+\
+var bigFeatureCollection = ee.FeatureCollection('PATH TO TRAIN/VAL');\
+\
+// var bigFeatureCollection = ee.FeatureCollection('projects/ee-laguarta/assets/testALL3-Apr22-Mar23-T0');\
+var testFeatureCollection = ee.FeatureCollection('PATH TO TEST');\
+\
+bigFeatureCollection = bigFeatureCollection.merge(testFeatureCollection);\
+print(bigFeatureCollection.limit(2))\
+\
+var folderPath1 = 'projects/ee-laguarta/assets/harmonics_by_region_test'; // Replace with your folder path\
+// Search for assets within the folder\
+var assetList1 = ee.data.getList(\{ 'id': folderPath1 \});\
+\
+var folderPath2 = 'users/laguarta/harmonics_by_region_test'; // Replace with your folder path\
+var assetList2 = ee.data.getList(\{ 'id': folderPath2 \});\
+\
+\
+// Get the asset IDs for harmonics in the whole country\
+var assetIds1 = assetList1.map(function(asset) \{\
+  return ee.String(asset.id);\
+\});\
+var assetIds2 = assetList2.map(function(asset) \{\
+  return ee.String(asset.id);\
+\});\
+\
+// Create an ImageCollection from the asset IDs\
+var imageCollection = ee.ImageCollection(assetIds1);\
+var imageCollection = imageCollection.merge(ee.ImageCollection(assetIds2));\
+\
+var harmonics = imageCollection.mosaic();\
+\
+Map.addLayer(harmonics, \{min: -0.5, max: 1, gamma: 1.4, bands:['GCVI_constant', 'GCVI_cos1', 'GCVI_sin1']\}, "GCVI Harmonics");\
+\
+\
+\
+var bands = harmonics.bandNames();\
+// print(bands)\
+var clean_bands = bands.removeAll(['GCVI_variance', 'GCVI_count', 'GCVI_mean', 'GCVI_rmse', 'GCVI_r2', 'WDRVI_cos1','WDRVI_cos2','WDRVI_cos3','WDRVI_count','WDRVI_mean','WDRVI_r2','WDRVI_rmse','WDRVI_sin1','WDRVI_sin2','WDRVI_sin3','WDRVI_t','WDRVI_variance'])\
+\
+Map.addLayer(testFeatureCollection, \{color:'blue'\}, 'Training set');\
+\
+\
+\
+var trainb = bigFeatureCollection.filterMetadata('fold', 'equals', 0);\
+var valb = bigFeatureCollection.filterMetadata('fold', 'equals', 1);\
+var testb = bigFeatureCollection.filterMetadata('fold', 'equals', 2);\
+\
+var scale = 10\
+var tileScale = 2\
+\
+var totalCount = trainb.size();\
+\
+var eigthCount = totalCount.divide(8).toInt();\
+var two = eigthCount.multiply(2).toInt();\
+var three = eigthCount.multiply(3).toInt();\
+var four = eigthCount.multiply(4).toInt();\
+var five = eigthCount.multiply(5).toInt();\
+var six = eigthCount.multiply(6).toInt();\
+var seven = eigthCount.multiply(7).toInt();\
+// var eight = quarterCount.multiply(8).toInt();\
+\
+\
+// Create four subsets\
+var trainb1 = trainb.toList(totalCount).slice(0, eigthCount);\
+var trainb2 = trainb.toList(totalCount).slice(eigthCount, two);\
+var trainb3 = trainb.toList(totalCount).slice(two, three);\
+var trainb4 = trainb.toList(totalCount).slice(three, four);\
+var trainb5 = trainb.toList(totalCount).slice(four, five);\
+var trainb6 = trainb.toList(totalCount).slice(five, six);\
+var trainb7 = trainb.toList(totalCount).slice(six, seven);\
+var trainb8 = trainb.toList(totalCount).slice(seven);\
+\
+// Convert the sliced parts back to Feature Collections\
+trainb1 = ee.FeatureCollection(trainb1);\
+trainb2 = ee.FeatureCollection(trainb2);\
+trainb3 = ee.FeatureCollection(trainb3);\
+trainb4 = ee.FeatureCollection(trainb4);\
+trainb5 = ee.FeatureCollection(trainb5);\
+trainb6 = ee.FeatureCollection(trainb6);\
+trainb7 = ee.FeatureCollection(trainb7);\
+trainb8 = ee.FeatureCollection(trainb8);\
+\
+var visParams1 = \{\
+  color: 'red',\
+  fillColor: '00000000'  // Transparent fill\
+\};\
+var visParams2 = \{\
+  color: 'blue',\
+  fillColor: '00000000'  // Transparent fill\
+\};\
+var visParams3 = \{\
+  color: 'pink',\
+  fillColor: '00000000'  // Transparent fill\
+\};\
+var visParams4 = \{\
+  color: 'beige',\
+  fillColor: '00000000'  // Transparent fill\
+\};\
+var visParams5 = \{\
+  color: 'cyan',\
+  fillColor: '00000000'  // Transparent fill\
+\};\
+var visParams6 = \{\
+  color: 'black',\
+  fillColor: '00000000'  // Transparent fill\
+\};\
+var visParams7 = \{\
+  color: 'white',\
+  fillColor: '00000000'  // Transparent fill\
+\};\
+var visParams8 = \{\
+  color: 'purple',\
+  fillColor: '00000000'  // Transparent fill\
+\};\
+Map.addLayer(trainb1, visParams1, '1');\
+Map.addLayer(trainb2, visParams2, '2');\
+Map.addLayer(trainb3, visParams3, '3');\
+Map.addLayer(trainb4, visParams4, '4');\
+Map.addLayer(trainb5, visParams5, '5');\
+Map.addLayer(trainb6, visParams6, '6');\
+Map.addLayer(trainb7, visParams7, '7');\
+Map.addLayer(trainb8, visParams8, '8');\
+\
+\
+// print(trainb.limit(2))\
+var train1 = harmonics.select(cleanBands).sampleRegions(\{\
+  collection: trainb1,\
+  properties: ['cropland_type', 'fold'],\
+  scale: 10, \
+  tileScale:2,\
+  geometries: true\
+\});\
+\
+// (ALTERNATIVELY RUN EXPORT TO ASSET TO TRAIN MODEL ON GEE AND VISUALIZE)\
+Export.table.toDrive(\{\
+  collection: train1,\
+  description: 'train1',\
+  folder: 'Final'\
+\});\
+\
+var train2 = harmonics.select(cleanBands).sampleRegions(\{\
+  collection: trainb2,\
+  properties: ['cropland_type', 'fold'],\
+  scale: 10, \
+  tileScale:2,\
+  geometries: true\
+\});\
+\
+\
+Export.table.toDrive(\{\
+  collection: train2,\
+  description: 'train2',\
+  folder: 'Final'\
+\});\
+\
+var train3 = harmonics.select(cleanBands).sampleRegions(\{\
+  collection: trainb3,\
+  properties: ['cropland_type', 'fold'],\
+  scale: 10, \
+  tileScale:2,\
+  geometries: true\
+\});\
+\
+Export.table.toDrive(\{\
+  collection: train3,\
+  description: 'train3',\
+  folder: 'Final'\
+\});\
+\
+var train4 = harmonics.select(cleanBands).sampleRegions(\{\
+  collection: trainb4,\
+  properties: ['cropland_type', 'fold'],\
+  scale: 10, \
+  tileScale:2,\
+  geometries: true\
+\});\
+\
+Export.table.toDrive(\{\
+  collection: train4,\
+  description: 'train4',\
+  folder: 'Final'\
+\});\
+\
+var train5 = harmonics.select(cleanBands).sampleRegions(\{\
+  collection: trainb5,\
+  properties: ['cropland_type', 'fold'],\
+  scale: 10, \
+  tileScale:2,\
+  geometries: true\
+\});\
+\
+Export.table.toDrive(\{\
+  collection: train5,\
+  description: 'train5',\
+  folder: 'Final'\
+\});\
+\
+var train6 = harmonics.select(cleanBands).sampleRegions(\{\
+  collection: trainb6,\
+  properties: ['cropland_type', 'fold'],\
+  scale: 10, \
+  tileScale:2,\
+  geometries: true\
+\});\
+\
+\
+Export.table.toDrive(\{\
+  collection: train6,\
+  description: 'train6',\
+  folder: 'Final'\
+\});\
+\
+var train7 = harmonics.select(cleanBands).sampleRegions(\{\
+  collection: trainb7,\
+  properties: ['cropland_type', 'fold'],\
+  scale: 10, \
+  tileScale:2,\
+  geometries: true\
+\});\
+\
+\
+Export.table.toDrive(\{\
+  collection: train7,\
+  description: 'train7',\
+  folder: 'Final'\
+\});\
+\
+var train8 = harmonics.select(cleanBands).sampleRegions(\{\
+  collection: trainb8,\
+  properties: ['cropland_type', 'fold'],\
+  scale: 10, \
+  tileScale:2,\
+  geometries: true\
+\});\
+\
+\
+Export.table.toDrive(\{\
+  collection: train8,\
+  description: 'train8',\
+  folder: 'Final'\
+\});\
+\
+var val = harmonics.select(cleanBands).sampleRegions(\{\
+  collection: valb,\
+  properties: ['cropland_type', 'fold'],\
+  scale: scale, \
+  tileScale:tileScale,\
+    geometries: true\
+\
+\});\
+\
+Export.table.toDrive(\{\
+  collection: val,\
+  description: 'val',\
+  folder: 'Final'\
+\});\
+\
+\
+var exportParams = \{\
+  collection: train1,\
+  description: 'FinalTrain1',\
+  assetId: 'users/laguarta/FinalTrain1',  \
+\};\
+Export.table.toAsset(exportParams);\
+var exportParams = \{\
+  collection: train2,\
+  description: 'FinalTrain2',\
+  assetId: 'users/laguarta/FinalTrain2',  \
+\};\
+Export.table.toAsset(exportParams);\
+var exportParams = \{\
+  collection: train3,\
+  description: 'FinalTrain3',\
+  assetId: 'users/laguarta/FinalTrain3',  \
+\};\
+Export.table.toAsset(exportParams);\
+var exportParams = \{\
+  collection: train4,\
+  description: 'FinalTrain4',\
+  assetId: 'users/laguarta/FinalTrain4',  \
+\};\
+Export.table.toAsset(exportParams);\
+var exportParams = \{\
+  collection: train5,\
+  description: 'FinalTrain5',\
+  assetId: 'users/laguarta/FinalTrain5',  \
+\};\
+Export.table.toAsset(exportParams);\
+var exportParams = \{\
+  collection: train6,\
+  description: 'FinalTrain6',\
+  assetId: 'users/laguarta/FinalTrain6',  \
+\};\
+Export.table.toAsset(exportParams);\
+var exportParams = \{\
+  collection: train7,\
+  description: 'FinalTrain7',\
+  assetId: 'users/laguarta/FinalTrain7',  \
+\};\
+Export.table.toAsset(exportParams);\
+var exportParams = \{\
+  collection: train8,\
+  description: 'FinalTrain8',\
+  assetId: 'users/laguarta/FinalTrain8',  \
+\};\
+Export.table.toAsset(exportParams);}
