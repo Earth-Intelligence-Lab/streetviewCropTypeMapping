@@ -1,0 +1,516 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2638
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 /*\
+Author: George Azzari (george.azzari@gmail.com)\
+Center on Food Security and the Environment\
+Department of Earth System Science\
+Stanford University\
+*/\
+var s2tools = require('users/georgeazzari/EEtools:s2.data.js');\
+var hrmtools = require('users/georgeazzari/EEtools:harmonics.v2.js');  \
+\
+\
+\
+function addTimeUnit(image, refdate) \{\
+  \
+  var date = image.date();\
+  \
+  // Letting user pick the reference date\
+  // var jan1 = ee.Date.fromYMD(date.get('year'), 1, 1);\
+  var dyear = date.difference(refdate, 'year');\
+  var time= image.select(0).multiply(0).add(dyear).select([0],['time']).float();\
+    \
+  var imageplus = image\
+    .addBands(time);\
+    \
+  return imageplus.set('timeunit', dyear, 'refdate', refdate);\
+  \
+\}\
+\
+\
+function addConstant(image)\{\
+  \
+  return image.addBands(image.select(0).multiply(0).add(1).select([0],['constant']));\
+  \
+\}\
+\
+\
+\
+function appendBand(current, previous)\{\
+  // Append it to the result (Note: only return current item on first element/iteration)\
+  var accum = ee.Algorithms.If(ee.Algorithms.IsEqual(previous,null), current, current.addBands(ee.Image(previous)));\
+  // Return the accumulation\
+  return accum;\
+\}\
+\
+\
+\
+// Add harmonics independents. \
+exports.addHarmonics = function(image, timeband, omega, nharmonics)\{\
+  \
+  var timeradians = ee.List.sequence(1, nharmonics, 1).map(\
+    \
+    function(n)\{\
+      \
+      var timerad = image.select(timeband)\
+        .multiply(ee.Number(n))\
+        .multiply(ee.Number(2*Math.PI))\
+        .multiply(ee.Number(omega));\
+      \
+      var cos = timerad.cos().rename(ee.String('cos').cat(ee.String(ee.Number(n).toInt())));\
+      var sin = timerad.sin().rename(ee.String('sin').cat(ee.String(ee.Number(n).toInt())));\
+      \
+      return ee.List([cos, sin]);\
+      \
+    \}).flatten();\
+  \
+  // Convert list into a collection and smash into an image.\
+  var timeradsimg = ee.Image(ee.ImageCollection.fromImages(timeradians).iterate(appendBand));\
+  \
+  var constant = image.select(timeband).divide(image.select(timeband)).rename('constant');\
+  \
+  return image.addBands(timeradsimg).addBands(constant)\
+    .set(\
+      'independents', timeradsimg.bandNames().add(timeband).add('constant'),\
+      'omega', omega,\
+      'nharmonics', nharmonics\
+      );\
+  \
+\}\
+\
+\
+\
+\
+/* Attach harmonic independents to an input image collection.*/\
+exports.getHarmonicCollection = function(collection, omega, nharmonics, timeband, refdate)\{\
+  \
+  if(nharmonics===null)\{\
+    nharmonics = 2;\
+  \}\
+  \
+  if(timeband===null)\{\
+    \
+    if(refdate===null)\{\
+      var d = ee.Image(collection.first()).date();\
+      refdate = ee.Date.fromYMD(d.get('year'), 1, 1);\
+    \}\
+    \
+    timeband = 'time';\
+    collection = collection.map(function(img)\{return addTimeUnit(img, refdate)\});\
+    \
+  \}\
+  \
+  // Add harmonic terms as new image bands.\
+  var harmonic_coll = collection.map(\
+    \
+    function(image)\{\
+      \
+      return exports.addHarmonics(image, timeband, omega, nharmonics);\
+      \
+    \});\
+  \
+  return harmonic_coll;\
+  \
+\};\
+\
+\
+\
+\
+/* Generate a dummy collection of harmonis indepents with a cadence of ndays.\
+   Useful to generate "predicted" values from pre-fitted coefficients */\
+exports.getDummyTime = function(startdate, enddate, ndays, dummyimg, addharmonics, omega, nharmonics)\{\
+  \
+  var diff = enddate.difference(startdate, 'day');\
+  var increments = ee.List.sequence(1, diff, null, ndays);\
+  \
+  // Had to add the "round" part to avoid sub-daily increments when ndays is not 365.\
+  var dates = increments.map(function(i)\{return startdate.advance(ee.Number(i).round(), 'day')\});\
+\
+  var dummys = dates.map(function(d)\{\
+    \
+    d = ee.Date(d);\
+    var dummy = dummyimg.add(d.millis())\
+      .select([0],['dummy'])\
+      .set('date', d.format(), 'system:time_start', d.millis());\
+    \
+    dummy = addTimeUnit(dummy, startdate);\
+    \
+    return dummy;\
+    \
+  \});\
+  \
+  var imgcoll =  ee.ImageCollection.fromImages(dummys).set(\
+    'startdate', startdate, \
+    'enddate', enddate, \
+    'ndays', ndays);\
+  \
+  if(addharmonics===true)\{\
+  \
+  imgcoll = exports.getHarmonicCollection(imgcoll, omega, nharmonics, 'time', null)  \
+  \
+  \}\
+  \
+  return  imgcoll;\
+\
+\};\
+\
+\
+\
+\
+function arrayimgHarmonicRegr(harmonicoll, dependent, independents)\{\
+  \
+  /* The first output is a coefficients array with dimensions (numX, numY); \
+     each column contains the coefficients for the corresponding dependent variable. \
+     The second output is a vector of the *root mean square* of the residuals of each dependent variable. \
+     Both outputs are null if the system is underdetermined, e.g. the number of inputs is less than or equal to numX.\
+  */\
+  \
+  independents = ee.List(independents);\
+  dependent = ee.String(dependent);\
+  \
+  var regression = harmonicoll\
+    .select(independents.add(dependent))\
+    .reduce(ee.Reducer.linearRegression(independents.length(), 1));\
+  \
+  return  regression;\
+  \
+\}\
+\
+\
+\
+\
+function imageHarmonicRegr(harmonicoll, dependent, independents)\{\
+  \
+  var hregr = arrayimgHarmonicRegr(harmonicoll, dependent, independents);\
+  \
+  independents = ee.List(independents);\
+  dependent = ee.String(dependent);\
+  \
+  var totreducer = ee.Reducer.sampleVariance()\
+    .combine(ee.Reducer.count(), null, true)\
+    .combine(ee.Reducer.mean(), null, true);\
+    \
+  var stats = harmonicoll.select(dependent)\
+    .reduce(totreducer)\
+  \
+  // New names for coefficients \
+  var newnames = independents.map(\
+    function(b)\{\
+      return dependent.cat(ee.String('_')).cat(ee.String(b));\
+    \});\
+  \
+  // Turn the array image into a multi-band image of coefficients.\
+  var imgcoeffs = hregr.select('coefficients')\
+    .arrayProject([0])\
+    .arrayFlatten([independents])\
+    .select(independents, newnames)\
+    // .multiply(1e4).toInt32(); // This is more for exporting as assets.\
+\
+  // The band 'residuals' the *root mean square* of the residuals (RMSE)\
+  var rmse = hregr.select('residuals')\
+    .arrayProject([0])\
+    .arrayFlatten([[dependent.cat(ee.String('_rmse'))]]);\
+  \
+  var variance = stats.select(dependent.cat(ee.String('_variance')));\
+  \
+  var r2 = ee.Image(1).updateMask(variance).subtract(rmse.pow(2).divide(variance))\
+    .select([0], [dependent.cat(ee.String('_r2'))]);\
+  \
+  return imgcoeffs.addBands(stats).addBands(rmse).addBands(r2);\
+  \
+\}\
+\
+\
+\
+\
+/*\
+ * Generates harmonic-regression coefficients for selected bands in an image collection. \
+ * It assumes that the collection has already been transformed into an harmonic collection.\
+ *\
+ */\
+exports.getHarmonicCoeffs = function(harmonicoll, bands, independents, ascoll)\{\
+  \
+  if(independents===null)\{\
+    // Use these independent variables in the harmonic regression. Note: removed 'time'\
+    // independents = ee.List(['constant', 'cos', 'sin', 'cos2', 'sin2']);\
+    // New approach will use the metadata of harmonic image if independents null.\
+    independents = ee.List(ee.Image(harmonicoll.first()).get('independents'));\
+  \}\
+  \
+  var coefficients = ee.List(bands).map(\
+    function(band)\{\
+      return imageHarmonicRegr(harmonicoll, band, independents);\
+    \});\
+  \
+  var coeffcoll = ee.ImageCollection.fromImages(coefficients);\
+  \
+  if(ascoll===true)\{\
+    return coeffcoll;\
+    \
+  \} else \{\
+    return ee.Image(coeffcoll.iterate(appendBand)).set(\
+      'bands', bands,\
+      'independents', independents \
+      //note: keep these properties to facilitate multiplications for predictions.\
+      );\
+    \
+  \}\
+    \
+\};\
+\
+\
+\
+/* TODO: NEEDS TO BE UPDATED */\
+exports.harmonicRegressions = function(imagecoll, omega, refdate, nharmonics, bands, independents, ascoll)\{\
+  \
+  /*\
+   * Runs all together for convenience.\
+   */\
+  \
+  var harmonicoll = exports.getHarmonicCollection(imagecoll, omega, refdate, nharmonics);\
+  \
+  var harmcoeffs = exports.getHarmonicCoeffs(harmonicoll, bands, independents, ascoll);\
+  \
+  return  harmcoeffs;\
+  \
+\};\
+\
+\
+\
+exports.getPhaseAmpl= function(harmcoeffs, band, nharmonics, hasconst)\{\
+  \
+  band = ee.String(band);\
+  \
+  var phaseampl_list = ee.List.sequence(1, nharmonics, 1).map(\
+    \
+    function(n)\{\
+      \
+      n = ee.String(ee.Number(n).toInt())\
+      var cosname = band.cat(ee.String('_cos')).cat(n);\
+      var sinname = band.cat(ee.String('_sin')).cat(n);\
+  \
+      // Compute phase and amplitude.\
+      var phase = harmcoeffs.select(cosname).atan2(\
+                  harmcoeffs.select(sinname))\
+                  .select([0],[band.cat(ee.String('_PHASE')).cat(n)]);\
+                  \
+      var amplitude = harmcoeffs.select(cosname).hypot(\
+                      harmcoeffs.select(sinname))\
+                      .select([0],[band.cat(ee.String('_AMPLITUDE')).cat(n)]);\
+      \
+      return ee.List([phase, amplitude]);\
+\
+  \}).flatten();\
+  \
+  var phaseampl_coll = ee.ImageCollection.fromImages(phaseampl_list);\
+  var phaseampl_img = ee.Image(phaseampl_coll.iterate(appendBand))\
+  \
+  // Taking care of (single) constant term.\
+  if(hasconst===true || hasconst===null)\{\
+  // If there is a constant coffiecient use it to define shift.\
+  var vertshift = harmcoeffs.select(\
+    [band.cat(ee.String('_constant'))],\
+    [band.cat(ee.String('_VERTSHIFT'))]\
+  );\
+    \
+  \} else \{\
+    // If there is not a constant set it as 1.\
+    var vertshift = phaseampl_img.select(0)\
+      .multiply(ee.Image.constant(0))\
+      .add(ee.Image.constant(1))\
+      .select([0],[band.cat(ee.String('_VERTSHIFT'))]);\
+      \
+  \}\
+    \
+  return phaseampl_img.addBands(vertshift)\
+  \
+\};\
+\
+\
+\
+\
+function plotPhaseAmpl(harmcoeffs, band, label)\{\
+  \
+  var cosname = band+'_cos';\
+  var sinname = band+'_sin';\
+  var constant = band+'_constant';\
+  \
+  // Compute phase and amplitude.\
+  var phase = harmcoeffs.select(sinname).atan2(\
+              harmcoeffs.select(cosname));\
+              \
+  var amplitude = harmcoeffs.select(cosname).hypot(\
+                  harmcoeffs.select(sinname));\
+                  \
+  var vertshift = harmcoeffs.select(constant); //this can be avg of coll (see demo)\
+  \
+  // Use the HSV to RGB transform to display phase and amplitude\
+  var rgb = phase.unitScale(-Math.PI, Math.PI).addBands(\
+            amplitude.multiply(0.00025)).addBands(\
+            vertshift.multiply(0.0001)).hsvToRgb();\
+  Map.addLayer(rgb, \{\}, label);\
+  // Map.centerObject(roi, 12);\
+  // Map.addLayer(roi, \{gamma:0.7\}, band);\
+  \
+\}\
+\
+\
+\
+function sclMasking(img)\{\
+  /*\
+  1	#ff0004	Saturated or defective\
+  2	#868686	Dark Area Pixels\
+  3	#774b0a	Cloud Shadows\
+  4	#10d22c	Vegetation\
+  5	#ffff52	Bare Soils\
+  6	#0000ff	Water\
+  7	#818181	Clouds Low Probability / Unclassified\
+  8	#c0c0c0	Clouds Medium Probability\
+  9	#f1f1f1	Clouds High Probability\
+  10 #bac5eb	Cirrus\
+  11 #52fff9	Snow / Ice\
+  */\
+  \
+  var badvals = ee.List([1,2,3,7,8,9,10,11]);\
+  var masks = badvals.map(function(c)\{return img.select('SCL').neq(ee.Number(c))\});\
+  var mask = ee.ImageCollection.fromImages(masks).and();\
+  return img.addBands(mask.select([0],['GOODPXS']));\
+  \
+\}\
+\
+\
+\
+function renameAndScaleS2A(img)\{\
+  \
+  var orignames = img.bandNames();\
+  \
+  var specbands = ee.List([\
+    'AEROS', 'BLUE',  'GREEN', 'RED', \
+    'RDED1', 'RDED2', 'RDED3', 'NIR', \
+    'RDED4', 'VAPOR', 'SWIR1', 'SWIR2']);\
+    \
+  var otherbands = orignames.slice(12);\
+  img = img.rename(specbands.cat(otherbands));\
+\
+  var nottoscale = ee.List(['QA10', 'QA20', 'QA60']);\
+  var toscale = ee.Image(img).bandNames().removeAll(nottoscale);\
+  var scaler = ee.Number(0.0001);\
+  var scaled = ee.Image(img).select(toscale).multiply(scaler);\
+  \
+  // Mask out bad pixels only for the optical bands.\
+  var scaled_optical = scaled.select(specbands).updateMask(img.select('GOODPXS'));\
+  scaled = scaled.addBands(scaled_optical, null, true);\
+\
+  return img.addBands(scaled, null, true);\
+\
+\}\
+\
+\
+\
+function cloudProbMask(img, threshold)\{\
+  \
+  var cloudprobsmask = img.select('MSK_CLDPRB').lte(threshold);\
+  \
+  return img.updateMask(cloudprobsmask);\
+  \
+\}\
+\
+\
+\
+function getS2Aplus(start_date, end_date, region, cloudthresh)\{\
+\
+  var s2plus = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")\
+      .filter(ee.Filter.date(start_date, end_date))\
+      .filter(ee.Filter.lte('CLOUDY_PIXEL_PERCENTAGE',35))\
+      .filterBounds(region)\
+      .map(sclMasking)\
+      .map(renameAndScaleS2A)\
+      // .map(function(img)\{return cloudProbMask(img, cloudthresh)\})\
+      // .map(s2tools.decodeQA60)\
+      .map(s2tools.addRededgeExtras)\
+      .map(s2tools.addSWVIs)\
+    \
+  return s2plus;\
+  \
+\}\
+\
+\
+\
+/*USED CODE ABOVE FROM \
+Author: George Azzari (george.azzari@gmail.com)\
+*/\
+\
+\
+var gadm_borders_admin2 = ee.FeatureCollection('projects/ee-laguarta/assets/gadm41_THA_2');\
+\
+var gadm_borders_admin2_list = gadm_borders_admin2.aggregate_array('NAME_1');\
+var shp_toSplit = gadm_borders_admin2.filter(ee.Filter.inList('NAME_1', gadm_borders_admin2_list));\
+var shp_varname = 'NAME_2';\
+var gadm_border_name = ee.List(shp_toSplit.aggregate_array(shp_varname));\
+\
+\
+\
+for (var i = 0; i < 706; ++i) \{\
+  var regionname = gadm_border_name.get(i);\
+  // print(regionname);\
+  \
+  var region = shp_toSplit.filterMetadata(shp_varname, 'equals', regionname);\
+\
+  var startd = ee.Date.fromYMD(2022, 4,1);\
+  var endd = ee.Date.fromYMD(2023, 3, 31);\
+  var s2plus = getS2Aplus(startd, endd, region, 1);\
+  // Map.addLayer(region, \{\}, 'ROI');\
+  \
+  \
+  var timeband = null; // create it automatically\
+  var refdate = startd; // set it to first date in collection;\
+  var omega = 1; \
+  var nharmonics = 3;\
+\
+/* Create and attach harmonic independents */\
+  var s2harms = hrmtools.getHarmonicCollection(s2plus, refdate, nharmonics, omega);\
+  // print('Checking harmonic time bands', s2harms);\
+\
+  /* Run harmonic regression */\
+  var bands = ['SWIR1', 'SWIR2', 'GCVI', 'RDED4', 'NIR']\
+  var independents = null; // default to inpendents in the collection's metadata.\
+  var ascoll = false; // don't return an image collection, return a squashed image instead.\
+  var s2hcoeffs = hrmtools.harmonicRegression(s2harms, independents, bands, ascoll);\
+  // print('Checking harmonic regression', s2hcoeffs);\
+  var s2hbands = s2hcoeffs.bandNames()\
+  var cleanBands = s2hbands.removeAll(['GCVI_variance', 'GCVI_count', 'GCVI_mean', 'GCVI_rmse', 'GCVI_r2', 'NIR_variance', 'NIR_count', 'NIR_mean', 'NIR_rmse', 'NIR_r2','RDED4_variance', 'RDED4_count', 'RDED4_mean', 'RDED4_rmse', 'RDED4_r2', 'SWIR1_variance', 'SWIR1_count', 'SWIR1_mean', 'SWIR1_rmse', 'SWIR1_r2', 'SWIR2_variance', 'SWIR2_count', 'SWIR2_mean', 'SWIR2_rmse', 'SWIR2_r2' ])\
+  \
+  s2hcoeffs = s2hcoeffs.select(cleanBands);\
+  // Map.addLayer(harmonics, \{min: -0.5, max: 1, gamma: 1.4, bands:['GCVI_constant', 'GCVI_cos1', 'GCVI_sin1']\}, "GCVI Harmonics");\
+\
+// s2hbands.clip(region), 'Region');\
+\
+  var hrmfitcoll = hrmtools.fitHarmonicColl(s2harms, s2hcoeffs, true, 'system:index');\
+  print(ui.Chart.image.series(hrmfitcoll.select(['NDVI_FIT','NDVI']), roi, ee.Reducer.mean(), 10)\
+      .setOptions(\{\
+        title: 'Harmonic model: original and fitted values',\
+        lineWidth: 1,\
+        pointSize: 3,\
+  \}));\
+  \
+  \
+  s2hcoeffs = s2hcoeffs.multiply(10000).toInt32();\
+  s2hcoeffs = s2hcoeffs.clip(region.geometry());\
+  \
+  var filename = ee.String('harmonicstest'+i).getInfo(); // COMMENT\
+  // Export the harmonics by area\
+  Export.image.toAsset(\{\
+    image: s2hcoeffs,\
+    description: filename,\
+    assetId: 'users/laguarta/harmonics_by_region_test/' + filename,\
+    dimensions: null,\
+    region: region.geometry(),\
+    scale: 10,\
+    maxPixels: 1e13\
+  \});\
+\}}
